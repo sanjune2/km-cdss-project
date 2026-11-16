@@ -57,3 +57,34 @@ class Explanation(BaseModel):
     unexplainedSymptoms: list[str] = Field(
         description="제공된 근거로 설명하지 못한 입력 증상"
     )
+
+class Candidate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: int = Field(gt=0, description="기업 항목 식별번호")
+    name: str = Field(description="후보 이름")
+
+    score: float | None = Field(description="서버가 계산한 점수")
+    rank: int | None = Field(gt=0, description="결과 순위")
+
+    evidence: list[Evidence] = Field(description="기업 원문 근거 목록")
+    explanation: Explanation = Field(description="AI 설명과 처리 상태")
+
+class DiseaseSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["DISEASE"] = Field(description="병증 검색 결과 구분")
+
+    caseId: int = Field(gt=0, description="상담기록 식별번호")
+    searchId: str = Field(description="이번 검색의 식별번호")
+    symptoms: str = Field(description="이번 검색에 사용한 증상")
+
+    candidates: list[Candidate] = Field(description="병증 후보 전체 목록")
+    total: int = Field(ge=0, description="반환한 후보 전체 건수")
+
+    hasPendingExplanations: bool = Field(
+        description="대기 또는 처리 중인 설명 작업 존재 여부"
+    )
+    cancelRequested: bool = Field(description="작업 중단 요청 접수 여부")
+
+    message: str | None = Field(description="검색 결과 안내")
