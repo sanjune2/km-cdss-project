@@ -1,7 +1,10 @@
 from fractions import Fraction
 
+import numpy as np
+
 
 MAX_KEYWORD_CANDIDATES = 30
+MAX_SEMANTIC_CANDIDATES = 30
 RRF_K = 60
 
 
@@ -88,4 +91,81 @@ def fuse_rrf(
             "rank": rank,
         }
         for rank, disease_id in enumerate(ordered_ids, start=1)
+    ]
+
+
+def search_semantic(
+    query_vector: np.ndarray,
+    diseases: list[dict],
+    chunks: list[dict],
+    matrix: np.ndarray,
+) -> list[dict]:
+    query = np.asarray(query_vector, dtype=np.float64)
+    if query.shape != (384,) or not np.isfinite(query).all():
+        raise ValueError("입력 벡터는 유효한 숫자 384개여야 합니다.")
+
+    query_norm = np.linalg.norm(query)
+    if not np.isfinite(query_norm) or query_norm == 0:
+        raise ValueError("입력 벡터의 길이가 올바르지 않습니다.")
+
+    if matrix.ndim != 2 or matrix.shape[1] != 384:
+        raise ValueError("검색 자료의 벡터 배열 크기가 올바르지 않습니다.")
+
+    disease_names = {
+        row["DIS_UNIQN"]: row["ATT_DIS_NM"]
+        for row in diseases
+    }
+    disease_chunks = [
+        row for row in chunks
+        if row["entity_type"] == "disease"
+    ]
+    if not disease_chunks:
+        raise ValueError("병증 검색에 사용할 원문 조각이 없습니다.")
+
+    row_numbers = []
+    for chunk in disease_chunks:
+        disease_id = chunk["entity_id"]
+        row_number = chunk["embedding_row"]
+
+        if type(disease_id) is not int or disease_id not in disease_names:
+            raise ValueError(f"{chunk['chunk_id']}: 연결된 병증이 없습니다.")
+
+        if type(row_number) is not int or not 0 <= row_number < len(matrix):
+            raise ValueError(f"{chunk['chunk_id']}: 벡터 행번호 오류")
+
+        row_numbers.append(row_number)
+
+    vectors = matrix[row_numbers].astype(np.float64)
+    if not np.isfinite(vectors).all():
+        raise ValueError("병증 벡터에 유효하지 않은 수치가 있습니다.")
+
+    norms = np.linalg.norm(vectors, axis=1)
+    if not np.isfinite(norms).all() or np.any(norms == 0):
+        raise ValueError("병증 벡터의 길이가 올바르지 않습니다.")
+
+    similarities = (vectors / norms[:, None]) @ (query / query_norm)
+    similarities = np.clip(similarities, -1.0, 1.0)
+    best_by_disease = {}
+
+    for chunk, similarity in zip(disease_chunks, similarities):
+        disease_id = chunk["entity_id"]
+        score = float(similarity)
+        previous = best_by_disease.get(disease_id)
+
+        if previous is None or score > previous["semanticScore"]:
+            best_by_disease[disease_id] = {
+                "id": disease_id,
+                "name": disease_names[disease_id],
+                "semanticScore": score,
+                "bestChunkId": chunk["chunk_id"],
+            }
+
+    ranked = sorted(
+        best_by_disease.values(),
+        key=lambda row: (-row["semanticScore"], row["name"], row["id"]),
+    )[:MAX_SEMANTIC_CANDIDATES]
+
+    return [
+        {**row, "rank": rank}
+        for rank, row in enumerate(ranked, start=1)
     ]
