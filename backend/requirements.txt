@@ -1,6 +1,7 @@
-# schemas.py 작성 단계에서 확인한 초기 설치 목록
+# AI 요청·응답 형식 및 검색 자료 검사에 사용하는 설치 목록
 annotated-types==0.8.0
 pydantic==2.14.3
 pydantic_core==2.50.4
 typing-inspection==0.4.5
 typing_extensions==4.16.0
+numpy==2.5.4
