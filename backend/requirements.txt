@@ -1,7 +1,14 @@
-# AI 요청·응답 형식 및 검색 자료 검사에 사용하는 설치 목록
+# AI 검색 개발 및 자료 검사에 사용하는 설치 목록
 annotated-types==0.8.0
 pydantic==2.14.3
 pydantic_core==2.50.4
 typing-inspection==0.4.5
 typing_extensions==4.16.0
 numpy==2.5.4
+
+# E5 임베딩 실행
+torch==2.15.0
+transformers==4.57.6
+tokenizers==0.22.2
+safetensors==0.8.0
+huggingface-hub==0.36.2
