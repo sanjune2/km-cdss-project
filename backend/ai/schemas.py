@@ -88,3 +88,129 @@ class DiseaseSearchResult(BaseModel):
     cancelRequested: bool = Field(description="작업 중단 요청 접수 여부")
 
     message: str | None = Field(description="검색 결과 안내")
+
+class PrescriptionSearchRequest(SymptomSearchRequest):
+    diseaseSearchId: str = Field(
+        pattern=r"^[0-9]+$",
+        description="병증 검색 응답으로 받은 검색 식별번호",
+    )
+
+    selectedDiseases: list[int] = Field(
+        min_length=1,
+        max_length=1,
+        description="선택한 기업 병증 식별번호 한 개",
+    )
+
+    @field_validator("selectedDiseases")
+    @classmethod
+    def validate_selected_disease(cls, value: list[int]) -> list[int]:
+        if value[0] <= 0:
+            raise ValueError("병증 식별번호는 1 이상이어야 합니다.")
+
+        return value
+
+class Ingredient(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    compositionId: int | None = Field(
+        gt=0,
+        description="기업 원본의 처방·약재 구성 행 식별번호",
+    )
+    id: int | None = Field(gt=0, description="약재 식별번호")
+    name: str = Field(description="약재명")
+
+    amount: str | None = Field(description="원본 용량 수치의 소수 문자열")
+    unit: str | None = Field(description="원본 용량 단위")
+    preparation: str | None = Field(description="원본 가공법")
+    originalDoseInfo: str | None = Field(description="원본 용량·용법 기록")
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str) -> str:
+        value = value.strip()
+
+        if not value:
+            raise ValueError("약재명을 입력해주세요.")
+
+        return value
+
+class Caution(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status: Literal[
+        "RULES_NOT_REVIEWED",
+        "PATIENT_INFO_INSUFFICIENT",
+        "SOURCE_NOT_REGISTERED",
+        "CHECKED",
+        "INCOMPLETE",
+    ] = Field(description="주의정보 대조 상태")
+
+    registeredTexts: list[str] = Field(
+        description="기업 자료에 등록된 주의·부작용·금기 원문"
+    )
+
+    message: str | None = Field(description="대조 상태와 미완료 사유 안내")
+
+class PrescriptionCandidate(Candidate):
+    evaluationStatus: Literal[
+        "SCORED",
+        "INSUFFICIENT_DATA",
+        "POLICY_NOT_CONFIGURED",
+    ] = Field(description="처방 연관성 평가 상태")
+
+    ingredients: list[Ingredient] = Field(description="처방의 약재 구성 목록")
+    caution: Caution = Field(description="등록된 주의정보와 대조 상태")
+
+class PrescriptionSearchSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    connectedCount: int = Field(
+        ge=0,
+        description="선택 병증에 연결된 처방 전체 건수",
+    )
+    scoredCount: int = Field(
+        ge=0,
+        description="연관성 평가를 완료한 처방 건수",
+    )
+    insufficientCount: int = Field(
+        ge=0,
+        description="평가 자료가 부족한 처방 건수",
+    )
+    policyUnconfiguredCount: int = Field(
+        ge=0,
+        description="평가 정책 미설정으로 평가하지 못한 처방 건수",
+    )
+
+class PrescriptionSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["PRESCRIPTION"] = Field(
+        description="처방 검색 결과 구분"
+    )
+
+    caseId: int = Field(gt=0, description="상담기록 식별번호")
+    selectedDiseaseId: int = Field(
+        gt=0,
+        description="선택한 기업 병증 식별번호",
+    )
+
+    diseaseSearchId: str = Field(description="연결된 병증 검색 식별번호")
+    searchId: str = Field(description="이번 처방 검색의 식별번호")
+    symptoms: str = Field(description="이번 검색에 사용한 증상")
+
+    candidates: list[PrescriptionCandidate] = Field(
+        description="연관성 평가를 완료한 처방 후보 목록"
+    )
+    unscoredCandidates: list[PrescriptionCandidate] = Field(
+        description="자료 부족 또는 정책 미설정으로 미평가된 처방 목록"
+    )
+    summary: PrescriptionSearchSummary = Field(
+        description="연결 처방의 평가 상태별 건수"
+    )
+
+    hasPendingExplanations: bool = Field(
+        description="대기 또는 처리 중인 설명 작업 존재 여부"
+    )
+    cancelRequested: bool = Field(description="작업 중단 요청 접수 여부")
+
+    message: str | None = Field(description="처방 검색 결과 안내")
