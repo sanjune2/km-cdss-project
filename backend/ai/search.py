@@ -2,6 +2,8 @@ from fractions import Fraction
 
 import numpy as np
 
+from .embedding import E5Embedder
+
 
 MAX_KEYWORD_CANDIDATES = 30
 MAX_SEMANTIC_CANDIDATES = 30
@@ -169,3 +171,34 @@ def search_semantic(
         {**row, "rank": rank}
         for rank, row in enumerate(ranked, start=1)
     ]
+
+
+def search_hybrid(
+    symptoms: str,
+    embedder: E5Embedder,
+    diseases: list[dict],
+    keywords: list[dict],
+    chunks: list[dict],
+    matrix: np.ndarray,
+) -> dict:
+    text = symptoms.strip()
+    if not text:
+        raise ValueError("증상을 입력해주세요.")
+
+    keyword_ids = search_keywords(text, diseases, keywords)
+    query_vector = embedder.encode_query(text)
+    semantic_candidates = search_semantic(
+        query_vector,
+        diseases,
+        chunks,
+        matrix,
+    )
+    semantic_ids = [row["id"] for row in semantic_candidates]
+    candidates = fuse_rrf(keyword_ids, semantic_ids, diseases)
+
+    return {
+        "symptoms": text,
+        "keywordIds": keyword_ids,
+        "semanticCandidates": semantic_candidates,
+        "candidates": candidates,
+    }
