@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 
 from backend.ai.embedding import E5Embedder, MODEL_ID, MODEL_REVISION
+from backend.ai.keyword_rules import INFLECTED_SYMPTOM_FORMS
 from backend.ai.search import (
+    KEYWORD_RRF_WEIGHT,
     MAX_KEYWORD_CANDIDATES,
     MAX_SEMANTIC_CANDIDATES,
     RRF_K,
@@ -91,6 +93,14 @@ def main() -> None:
             "dataRoot": str(root.resolve()),
             "modelId": MODEL_ID, "modelRevision": MODEL_REVISION,
             "rrfK": RRF_K,
+            "keywordRrfWeight": float(KEYWORD_RRF_WEIGHT),
+            "semanticRrfWeight": 1.0,
+            "keywordRankPolicy": "all_tied_first",
+            "inflectionPolicy": "explicit_forms_v1",
+            "inflectedSymptomForms": INFLECTED_SYMPTOM_FORMS,
+            "negationPolicy": "explicit_adjacent_prefix_suffix_v1",
+            "negationPrefixTerms": ["안", "못"],
+            "negationScope": "keyword_matches_only",
             "maxKeywordCandidates": MAX_KEYWORD_CANDIDATES,
             "maxSemanticCandidates": MAX_SEMANTIC_CANDIDATES,
         },

@@ -3,11 +3,19 @@ from fractions import Fraction
 import numpy as np
 
 from .embedding import E5Embedder
+from .keyword_rules import (
+    allows_sentence_match,
+    has_inflected_match,
+    has_non_negated_match,
+)
 
 
 MAX_KEYWORD_CANDIDATES = 30
 MAX_SEMANTIC_CANDIDATES = 30
 RRF_K = 60
+
+# 비교 기준: 키워드와 의미 검색 점수를 각각 1배로 반영
+KEYWORD_RRF_WEIGHT = Fraction(1, 1)
 
 
 def search_keywords(
@@ -26,7 +34,20 @@ def search_keywords(
     matched_ids = set()
 
     for row in keywords:
-        if query not in row["term"]:
+        term = row["term"].strip()
+
+        # 기존 방식: 입력한 전체 문자열이 등록 키워드 안에 포함되는지 확인
+        original_match = query in row["term"]
+
+        # 허용한 등록 표현의 기존 일치 또는 지정한 활용형 일치를 확인한다.
+        sentence_match = (
+            allows_sentence_match(row)
+            and (
+                has_non_negated_match(query, term)
+                or has_inflected_match(query, term)
+            )
+        )
+        if not (original_match or sentence_match):
             continue
 
         disease_id = row["DIS_UNIQN"]
@@ -71,9 +92,19 @@ def fuse_rrf(
                 raise ValueError(f"{label} 검색에 병증 {disease_id}가 중복됐습니다.")
 
             seen.add(disease_id)
+
+            # 키워드는 일치 여부만 판단하므로 모두 공동 1위로 취급한다.
+            # 의미 검색은 기존 유사도 순위를 사용한다.
+            rrf_rank = 1 if label == "키워드" else position
+            weight = (
+                KEYWORD_RRF_WEIGHT
+                if label == "키워드"
+                else Fraction(1, 1)
+            )
+
             scores[disease_id] = (
                 scores.get(disease_id, Fraction(0, 1))
-                + Fraction(1, RRF_K + position)
+                + weight * Fraction(1, RRF_K + rrf_rank)
             )
 
     ordered_ids = sorted(
