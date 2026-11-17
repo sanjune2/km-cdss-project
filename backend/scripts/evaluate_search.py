@@ -6,7 +6,10 @@ from pathlib import Path
 import numpy as np
 
 from backend.ai.embedding import E5Embedder, MODEL_ID, MODEL_REVISION
-from backend.ai.keyword_rules import INFLECTED_SYMPTOM_FORMS
+from backend.ai.keyword_rules import (
+    INFLECTED_SYMPTOM_FORMS,
+    get_keyword_match_types,
+)
 from backend.ai.search import (
     KEYWORD_RRF_WEIGHT,
     MAX_KEYWORD_CANDIDATES,
@@ -55,6 +58,26 @@ def main() -> None:
             symptoms=inputs[case_id], embedder=embedder,
             diseases=diseases, keywords=keywords, chunks=chunks, matrix=matrix,
         )
+        keyword_matches = []
+        keyword_ids = set(result["keywordIds"])
+
+        for keyword in keywords:
+            match_types = get_keyword_match_types(
+                result["symptoms"], keyword
+            )
+            if not match_types:
+                continue
+
+            disease_id = keyword["DIS_UNIQN"]
+            keyword_matches.append({
+                "termId": keyword["term_id"],
+                "term": keyword["term"],
+                "termType": keyword["term_type"],
+                "diseaseId": disease_id,
+                "diseaseName": names[disease_id],
+                "matchTypes": match_types,
+                "inKeywordCandidates": disease_id in keyword_ids,
+            })        
         ranks = {row["id"]: row["rank"] for row in result["candidates"]}
         found_ranks = [ranks[value] for value in expected_ids if value in ranks]
         best_rank = min(found_ranks) if found_ranks else None
@@ -73,6 +96,7 @@ def main() -> None:
             "inReturnedResults": best_rank is not None,
             "sourceLocation": criterion["source_location_record_original"],
             "overlapAudit": criterion["overlap_audit"],
+            "keywordMatches": keyword_matches,
             "searchResult": result,
         })
         print(f"{case_id}: 기대 후보 순위 {best_rank if best_rank is not None else '결과에 없음'}")
@@ -101,6 +125,7 @@ def main() -> None:
             "negationPolicy": "explicit_adjacent_prefix_suffix_v1",
             "negationPrefixTerms": ["안", "못"],
             "negationScope": "keyword_matches_only",
+            "keywordMatchTraceVersion": "v1",
             "maxKeywordCandidates": MAX_KEYWORD_CANDIDATES,
             "maxSemanticCandidates": MAX_SEMANTIC_CANDIDATES,
         },

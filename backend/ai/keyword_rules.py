@@ -123,3 +123,27 @@ def has_inflected_match(text: str, term: str) -> bool:
             return True
 
     return False
+
+
+def get_keyword_match_types(symptoms: str, keyword: dict) -> list[str]:
+    """등록 표현이 입력과 일치한 방식을 반환한다."""
+    query = symptoms.strip()
+    if not query:
+        return []
+
+    term = keyword["term"].strip()
+    match_types = []
+
+    # 기존 방식: 입력 전체가 등록 표현 안에 포함됨
+    if query in keyword["term"]:
+        match_types.append("input_in_term")
+
+    # 허용한 등록 표현의 문장 내 일치 방식 확인
+    if allows_sentence_match(keyword):
+        if has_non_negated_match(query, term):
+            match_types.append("term_in_input")
+
+        if has_inflected_match(query, term):
+            match_types.append("inflected_form")
+
+    return match_types

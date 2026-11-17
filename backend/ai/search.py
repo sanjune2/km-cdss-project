@@ -3,11 +3,7 @@ from fractions import Fraction
 import numpy as np
 
 from .embedding import E5Embedder
-from .keyword_rules import (
-    allows_sentence_match,
-    has_inflected_match,
-    has_non_negated_match,
-)
+from .keyword_rules import get_keyword_match_types
 
 
 MAX_KEYWORD_CANDIDATES = 30
@@ -34,20 +30,7 @@ def search_keywords(
     matched_ids = set()
 
     for row in keywords:
-        term = row["term"].strip()
-
-        # 기존 방식: 입력한 전체 문자열이 등록 키워드 안에 포함되는지 확인
-        original_match = query in row["term"]
-
-        # 허용한 등록 표현의 기존 일치 또는 지정한 활용형 일치를 확인한다.
-        sentence_match = (
-            allows_sentence_match(row)
-            and (
-                has_non_negated_match(query, term)
-                or has_inflected_match(query, term)
-            )
-        )
-        if not (original_match or sentence_match):
+        if not get_keyword_match_types(query, row):
             continue
 
         disease_id = row["DIS_UNIQN"]
