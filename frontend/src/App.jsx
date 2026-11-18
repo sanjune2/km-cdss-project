@@ -33,29 +33,35 @@ const roleMenus = {
 
 function App() {
   const [serverStatus, setServerStatus] = useState('확인 중')
+  const [currentRole, setCurrentRole] = useState(null)
 
   useEffect(() => {
-    fetch('/api/health')
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('서버 응답 오류')
-        }
-        return response.json()
-      })
-      .then((data) => {
-        setServerStatus(
-          data.status === 'ok' ? '연결 성공' : '확인 필요'
-        )
-      })
-      .catch(() => {
-        setServerStatus('연결 실패')
-      })
-  }, [])
+  fetch('/api/auth/me', {
+    credentials: 'include',
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error('로그인 정보 조회 실패')
+      }
+      return response.json()
+    })
+    .then((data) => {
+      const roleMap = {
+        OWNER: 'director',
+        DOCTOR: 'doctor',
+        DESK: 'desk',
+      }
 
-const currentRole = 'director'
+      setCurrentRole(roleMap[data.role] || null)
+    })
+    .catch(() => {
+      setCurrentRole(null)
+    })
+}, [])
+
 
 const visibleMenus = menus.filter((menu) =>
-  roleMenus[currentRole].includes(menu.path)
+  (roleMenus[currentRole] || []).includes(menu.path)
 )
 
   return (
@@ -94,8 +100,18 @@ const visibleMenus = menus.filter((menu) =>
             <Routes>
               <Route path="/" element={<Navigate to="/today" replace />} />
               <Route path="/today" element={<Today />} />
-              <Route path="/patients" element={<Patients />} />
-              <Route path="/consultation" element={<Consultation />} />
+              <Route
+                path="/patients"
+                element={<Patients currentRole={currentRole} />}
+              />
+              <Route
+                path="/consultation"
+                element={
+                  currentRole === 'doctor' || currentRole === 'director'
+                    ? <Consultation />
+                    : <Navigate to="/today" replace />
+                }
+              />
               <Route path="/prescriptions" element={<Prescriptions />} />
               <Route path="/prescription/new" element={<Prescriptions />} />
               <Route path="/account" element={<Account />} />

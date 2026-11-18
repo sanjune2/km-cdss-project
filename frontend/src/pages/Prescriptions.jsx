@@ -47,7 +47,10 @@ export default function Prescriptions() {
         setListError('')
 
         const response = await fetch(
-          'http://127.0.0.1:8000/api/prescriptions'
+    'http://127.0.0.1:8000/api/prescriptions',
+      {
+            credentials: 'include',
+          }
         )
 
         if (!response.ok) {
@@ -98,12 +101,13 @@ export default function Prescriptions() {
 
     try {
       const response = await fetch(
-        'http://127.0.0.1:8000/api/prescriptions',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          'http://127.0.0.1:8000/api/prescriptions',
+          {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+            },
           body: JSON.stringify({
             patientId: patient.id,
             consultationId,
@@ -168,6 +172,7 @@ const updatePrescription = async () => {
       `http://127.0.0.1:8000/api/prescriptions/${editPrescription.id}`,
       {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -225,11 +230,12 @@ const sendPrescription = async (record) => {
 
   try {
     const response = await fetch(
-      `http://127.0.0.1:8000/api/prescriptions/${record.id}/send`,
-      {
-        method: 'PATCH',
-      }
-    )
+  `http://127.0.0.1:8000/api/prescriptions/${record.id}/send`,
+  {
+    method: 'POST',
+    credentials: 'include',
+  }
+)
 
     const data = await response.json()
 
@@ -244,7 +250,9 @@ const sendPrescription = async (record) => {
 
     setPrescriptionRecords((prev) =>
       prev.map((item) =>
-        item.id === data.record.id ? data.record : item
+        String(item.id) === String(data.prescriptionId)
+          ? { ...item, status: data.status }
+          : item
       )
     )
 
@@ -269,6 +277,7 @@ const deletePrescription = async (record) => {
       `http://127.0.0.1:8000/api/prescriptions/${record.id}`,
       {
         method: 'DELETE',
+        credentials: 'include',
       }
     )
 

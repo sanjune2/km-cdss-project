@@ -68,7 +68,9 @@ export default function Today() {
   useEffect(() => {
     const loadWaitingPatients = async () => {
       try {
-        const response = await fetch('http://127.0.0.1:8000/api/waiting')
+        const response = await fetch('http://127.0.0.1:8000/api/waiting', {
+          credentials: 'include',
+        })
 
         if (!response.ok) {
           throw new Error('대기 목록 조회 실패')
@@ -104,6 +106,7 @@ export default function Today() {
         `http://127.0.0.1:8000/api/waiting/${id}`,
         {
           method: 'PATCH',
+          credentials: 'include',
           headers: {
             'Content-Type': 'application/json',
           },
@@ -136,19 +139,17 @@ export default function Today() {
     if (!window.confirm('상담을 취소하시겠습니까?')) return
 
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/waiting/${id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            status: '대기',
-            doctor: null,
-          }),
-        }
-      )
+      const response = await fetch(`http://127.0.0.1:8000/api/waiting/${id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          status: '대기',
+          doctor: null,
+        }),
+      })
 
       const data = await response.json()
 
@@ -172,12 +173,10 @@ export default function Today() {
     if (!window.confirm('접수를 취소하시겠습니까?')) return
 
     try {
-      const response = await fetch(
-        `http://127.0.0.1:8000/api/waiting/${id}`,
-        {
-          method: 'DELETE',
-        }
-      )
+      const response = await fetch(`http://127.0.0.1:8000/api/waiting/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
 
       const data = await response.json()
 

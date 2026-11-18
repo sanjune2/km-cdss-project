@@ -24,7 +24,7 @@ const testPatients = [
   },
 ]
 
-export default function Patients() {
+export default function Patients({ currentRole }) {
   const [selectedMenu, setSelectedMenu] = useState(null)
   const [searchKeyword, setSearchKeyword] = useState('')
   const [patients, setPatients] = useState([])
@@ -34,7 +34,9 @@ export default function Patients() {
 useEffect(() => {
   const loadPatients = async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/api/patients')
+      const response = await fetch('http://127.0.0.1:8000/api/patients', {
+        credentials: 'include',
+      })
 
       if (!response.ok) {
         throw new Error('환자 목록 조회 실패')
@@ -57,6 +59,7 @@ useEffect(() => {
     new Date().toLocaleDateString('en-CA')
   )
   const [selectedRecord, setSelectedRecord] = useState(null)
+  const [selectedPrescription, setSelectedPrescription] = useState(null)
   const [historyError, setHistoryError] = useState('')
   const [detailTab, setDetailTab] = useState('consultation')
 
@@ -67,6 +70,7 @@ useEffect(() => {
     try {
       const response = await fetch('http://127.0.0.1:8000/api/waiting', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -139,6 +143,7 @@ const saveEditedPatient = async () => {
       `http://127.0.0.1:8000/api/patients/${editPatient.id}`,
       {
         method: 'PATCH',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -208,6 +213,7 @@ const validatePatient = async (registerWaiting = false) => {
   try {
     const response = await fetch('http://127.0.0.1:8000/api/patients', {
       method: 'POST',
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
       },
@@ -226,6 +232,7 @@ const validatePatient = async (registerWaiting = false) => {
     if (registerWaiting) {
       const waitingResponse = await fetch('http://127.0.0.1:8000/api/waiting', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -273,7 +280,10 @@ const validatePatient = async (registerWaiting = false) => {
     const loadPrescriptionRecords = async () => {
       try {
         const response = await fetch(
-          'http://127.0.0.1:8000/api/prescriptions'
+          'http://127.0.0.1:8000/api/prescriptions',
+          {
+            credentials: 'include',
+          }
         )
 
         if (!response.ok) {
@@ -286,15 +296,17 @@ const validatePatient = async (registerWaiting = false) => {
         console.error('처방전 조회 오류:', error)
         setHistoryError('처방전 기록을 불러오지 못했습니다.')
       }
-    }
+      }
 
-    loadPrescriptionRecords()
-    const loadConsultationRecords = async () => {
-      try {
-        setHistoryError('')
+      const loadConsultationRecords = async () => {
+        try {
+          setHistoryError('')
 
         const response = await fetch(
-          'http://127.0.0.1:8000/api/consultations'
+          'http://127.0.0.1:8000/api/consultations',
+          {
+            credentials: 'include',
+          }
         )
 
         if (!response.ok) {
@@ -308,11 +320,18 @@ const validatePatient = async (registerWaiting = false) => {
         setHistoryError('상담 기록을 불러오지 못했습니다.')
       }
     }
-    loadPrescriptionRecords()
-    loadConsultationRecords()
-  }, [selectedMenu])
+      loadPrescriptionRecords()
+
+      if (currentRole !== 'desk') {
+        loadConsultationRecords()
+      }
+    }, [selectedMenu, currentRole])
 
   const filteredConsultations = consultationRecords.filter(
+    (record) => record.createdAt?.slice(0, 10) === historyDate
+  )
+
+  const filteredPrescriptions = prescriptionRecords.filter(
     (record) => record.createdAt?.slice(0, 10) === historyDate
   )
 
@@ -340,7 +359,7 @@ const validatePatient = async (registerWaiting = false) => {
             type="button"
             onClick={() => setSelectedMenu('history')}
           >
-            과거상담 기록확인
+            {currentRole === 'desk' ? '과거 처방전 기록확인' : '과거상담 기록확인'}
           </button>
         </div>
       )}
@@ -520,7 +539,9 @@ const validatePatient = async (registerWaiting = false) => {
 
           {selectedMenu === 'history' && (
             <div>
-              <h3>과거상담 기록확인</h3>
+              <h3>
+                {currentRole === 'desk' ? '과거 처방전 기록확인' : '과거상담 기록확인'}
+              </h3>
 
               <label>
                 조회 날짜:{' '}
@@ -530,11 +551,52 @@ const validatePatient = async (registerWaiting = false) => {
                   onChange={(e) => setHistoryDate(e.target.value)}
                 />
               </label>
+              {currentRole === 'desk' && (
+                <div style={{ marginTop: '20px' }}>
+                  <h4>처방전 목록</h4>
+
+                  <table style={{ width: '100%' }}>
+                    <thead>
+                      <tr>
+                        <th>작성 날짜</th>
+                        <th>환자명</th>
+                        <th>처방명</th>
+                        <th>상태</th>
+                        <th>작업</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {filteredPrescriptions.map((record) => (
+                        <tr key={record.id}>
+                          <td>{record.createdAt?.slice(0, 10)}</td>
+                          <td>{record.patientName}</td>
+                          <td>{record.prescriptionName}</td>
+                          <td>{record.status}</td>
+                          <td>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPrescription(record)}
+                            >
+                              상세보기
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {filteredPrescriptions.length === 0 && (
+                    <p>선택한 날짜의 처방전이 없습니다.</p>
+                  )}
+                </div>
+              )}
 
               {historyError && (
                 <p style={{ color: 'red' }}>{historyError}</p>
               )}
 
+              {currentRole !== 'desk' && (
               <table style={{ width: '100%', marginTop: '20px' }}>
                 <thead>
                   <tr>
@@ -546,7 +608,7 @@ const validatePatient = async (registerWaiting = false) => {
                 </thead>
 
                 <tbody>
-                  {filteredConsultations.map((record) => (
+                  {currentRole !== 'desk' && filteredConsultations.map((record) => (
                     <tr key={record.id}>
                       <td>{record.createdAt?.slice(0, 10)}</td>
                       <td>{record.patientName}</td>
@@ -563,12 +625,78 @@ const validatePatient = async (registerWaiting = false) => {
                   ))}
                 </tbody>
               </table>
+                  )}
 
-              {filteredConsultations.length === 0 && !historyError && (
-                <p>선택한 날짜의 상담 기록이 없습니다.</p>
+              {currentRole !== 'desk' &&
+                filteredConsultations.length === 0 &&
+                !historyError && (
+                  <p>선택한 날짜의 상담 기록이 없습니다.</p>
+                )}
+
+              {currentRole === 'desk' && selectedPrescription && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    inset: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 1000,
+                  }}
+                >
+                  <div
+                    role="dialog"
+                    aria-modal="true"
+                    aria-label="처방전 상세보기"
+                    style={{
+                      backgroundColor: 'white',
+                      padding: '24px',
+                      borderRadius: '10px',
+                      width: '500px',
+                      maxWidth: '90%',
+                      maxHeight: '85vh',
+                      overflowY: 'auto',
+                    }}
+                  >
+                    <h3>처방전 상세보기</h3>
+
+                    <p>환자명: {selectedPrescription.patientName}</p>
+                    <p>처방명: {selectedPrescription.prescriptionName}</p>
+                    <p>작성 날짜: {selectedPrescription.createdAt?.slice(0, 10)}</p>
+                    <p>상태: {selectedPrescription.status}</p>
+
+                    <h4>약재 구성</h4>
+
+                    <table style={{ width: '100%' }}>
+                      <thead>
+                        <tr>
+                          <th>약재명</th>
+                          <th>용량(g)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(selectedPrescription.herbs || []).map((herb, index) => (
+                          <tr key={index}>
+                            <td>{herb.name}</td>
+                            <td>{herb.amount}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPrescription(null)}
+                      style={{ marginTop: '20px' }}
+                    >
+                      닫기
+                    </button>
+                  </div>
+                </div>
               )}
 
-              {selectedRecord && (
+              {selectedRecord && currentRole !== 'desk' && (
                 <div
                   style={{
                     position: 'fixed',
