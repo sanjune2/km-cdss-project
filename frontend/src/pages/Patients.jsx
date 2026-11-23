@@ -1,6 +1,7 @@
 
 import { useEffect, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { formatOriginalDose, formatPrescribedDose } from '../prescriptionUtils'
 export default function Patients({ currentRole }) {
   const { key, state } = useLocation()
 
@@ -675,14 +676,16 @@ const validatePatient = async (registerWaiting = false) => {
                       <thead>
                         <tr>
                           <th>약재명</th>
-                          <th>용량(g)</th>
+                          <th>원본 참고량</th>
+                          <th>실제 처방량</th>
                         </tr>
                       </thead>
                       <tbody>
                         {(prescriptionDetail?.ingredients || []).map((herb, index) => (
                           <tr key={index}>
                             <td>{herb.name || herb.ingredientName || '-'}</td>
-                            <td>{herb.amount ?? herb.quantity ?? '-'}</td>
+                            <td>{formatOriginalDose(herb)}</td>
+                            <td>{formatPrescribedDose(herb)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -797,7 +800,7 @@ const validatePatient = async (registerWaiting = false) => {
                                       <h5>약재 구성</h5>
                                       {(prescriptionDetail.ingredients || []).length === 0 ? <p>등록된 약재가 없습니다.</p> : (
                                         <ul>{prescriptionDetail.ingredients.map((herb, index) => (
-                                          <li key={index}>{herb.name || herb.ingredientName || '-'}: {herb.amount ?? herb.quantity ?? '-'} {herb.unit || ''}</li>
+                                          <li key={index}>{herb.name || herb.ingredientName || '-'}: 원본 참고량 {formatOriginalDose(herb)} / 실제 처방량 {formatPrescribedDose(herb)}</li>
                                         ))}</ul>
                                       )}
                                     </div>

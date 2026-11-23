@@ -9,6 +9,7 @@ test('reference display preserves units, zero, notes and explicit missing state'
   assert.equal(formatOriginalDose({ amount: '2' }), '2 (단위 미등록)')
   assert.equal(formatOriginalDose({ originalDoseInfo: '다른 약재와 같은 분량' }), '원문 메모: 다른 약재와 같은 분량')
   assert.equal(formatOriginalDose({}), '원본 용량 미등록')
+  assert.equal(formatOriginalDose({ quantity: '2.5', unit: 'mL' }), '2.5 mL')
   assert.equal(formatPrescribedDose({}), '미입력')
 })
 

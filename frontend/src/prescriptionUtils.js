@@ -1,7 +1,7 @@
 const text = (value) => value == null ? '' : String(value).trim()
 
 export function formatOriginalDose(herb) {
-  const amount = text(herb.amount)
+  const amount = text(herb.amount ?? herb.quantity)
   const unit = text(herb.unit)
   const note = text(herb.originalDoseInfo)
   if (amount) return `${amount} ${unit || '(단위 미등록)'}`

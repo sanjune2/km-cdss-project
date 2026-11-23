@@ -16,6 +16,7 @@ from catalog import corporate_data
 from prescription_ingredients import validate_ingredient_copy
 from .explanations import explain, state
 from .evidence_checks import check_record, verify_candidate
+from .symptom_context import analyze_symptoms
 
 logger = logging.getLogger(__name__)
 model_process_lock = Lock()
@@ -51,12 +52,12 @@ def queued_job():
             "queuedAt": datetime.now(timezone.utc).isoformat()}
 
 
-def initial_explanations(rows, symptoms, data):
-    jobs = {str(row["id"]): queued_job() for row in rows[:3] if eligible(row)}
+def initial_explanations(rows, symptoms, data, assessment=None):
+    assessment = assessment if assessment is not None else analyze_symptoms(symptoms, data or {})
     # Send only verified registered expressions, never free-form patient input.
-    terms = sorted({row["term"].strip() for row in data.get("keywords", [])
-                    if row["term"].strip() and row["term"].strip() in symptoms}) if data else []
-    return {"explanations": jobs, "explanationTerms": terms,
+    terms = assessment['affirmedTerms']
+    jobs = {str(row['id']):queued_job() for row in rows[:3] if eligible(row)} if terms else {}
+    return {"explanations": jobs, "explanationTerms": terms, "inputAssessment": assessment,
             "versions": dict(data.get("versions", {})) if data else {}}
 
 
@@ -151,12 +152,14 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
         started = monotonic()
         failure = None
         data = None
+        assessment = None
         rows = []
         try:
             from .runtime import diseases_for, get_runtime
 
             data = get_runtime()
-            rows = diseases_for(request.symptoms, data)
+            assessment = analyze_symptoms(request.symptoms, data)
+            rows = diseases_for(request.symptoms, data, assessment)
         except (ImportError, OSError, ValueError, KeyError, RuntimeError):
             logger.exception("Company disease search dependency failed")
             failure = (503, DEPENDENCY_FAILURE)
@@ -164,7 +167,7 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
             logger.exception("Unexpected disease search failure")
             failure = (500, "병증 검색 중 오류가 발생했습니다.")
 
-        explanation_context = initial_explanations(rows, request.symptoms, data) if not failure else {}
+        explanation_context = initial_explanations(rows, request.symptoms, data, assessment) if not failure else {}
         if not failure:
             explanation_context["versions"]["rankingPolicy"] = "rrf-k60-v1.3"
         jobs = explanation_context.get("explanations", {})
@@ -226,7 +229,8 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
             "symptoms": request.symptoms,
             "candidates": [presentation(row, search_id, jobs) for row in rows],
             "total": len(rows), "hasPendingExplanations": bool(jobs), "cancelRequested": False,
-            "message": None if rows else "현재 검색 범위에서 관련 병증을 찾지 못했습니다",
+            "inputAssessment": assessment,
+            "message": (assessment or {}).get('message'),
         }
 
     @router.post("/api/ai/prescriptions")
@@ -277,7 +281,12 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
             data = get_runtime()
             if data["version"] != parent["DATA_VERSION"]:
                 raise ValueError("병증 검색 당시와 현재 검색 자료 버전이 다릅니다.")
-            result = prescriptions_for(request.symptoms, disease_id, data)
+            assessment = parent["INPUT_CONTEXT"].get('inputAssessment')
+            assessment = assessment if assessment is not None else analyze_symptoms(request.symptoms, data)
+            if not assessment.get('searchTerms',assessment['affirmedTerms']):
+                return JSONResponse(status_code=409, content={'error':{'code':'STATE_CONFLICT',
+                    'message':'현재 환자의 긍정 증상을 확인한 뒤 병증을 다시 검색해주세요.','field':'symptoms'}})
+            result = prescriptions_for(request.symptoms, disease_id, data, assessment)
         except (ImportError, OSError, ValueError, KeyError, RuntimeError):
             logger.exception("Company prescription search dependency failed")
             failure = (503, DEPENDENCY_FAILURE)
@@ -285,7 +294,7 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
             logger.exception("Unexpected prescription search failure")
             failure = (500, "처방 검색 중 오류가 발생했습니다.")
 
-        explanation_context = initial_explanations(result["candidates"], request.symptoms, data) if not failure else {}
+        explanation_context = initial_explanations(result["candidates"], request.symptoms, data, assessment) if not failure else {}
         if not failure:
             explanation_context["versions"]["evaluationPolicy"] = result.get("_evaluationPolicy")
         jobs = explanation_context.get("explanations", {})
@@ -318,6 +327,13 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
                 "snapshot": json.dumps(result, ensure_ascii=False),
             }).scalar_one()
             if not failure:
+                # Finish the user's selected prescription search before the
+                # unselected disease explanations that remain in its parent.
+                connection.execute(text('''
+                    UPDATE "SEARCH_LOG" SET "INPUT_CONTEXT" = "INPUT_CONTEXT" ||
+                        jsonb_build_object('prioritizedPrescriptionSearchId', CAST(:child AS text))
+                    WHERE "SEARCH_UNIQN" = :parent
+                '''), {'child':str(search_id),'parent':parent_id})
                 connection.execute(text("""
                     UPDATE "SEARCH_RESULT"
                     SET "IS_SELECTED" = TRUE, "SELECTED_AT" = COALESCE("SELECTED_AT", CURRENT_TIMESTAMP)
@@ -353,6 +369,7 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
             schedule(background, str(search_id), account)
         return {
             "kind": "PRESCRIPTION", "caseId": request.caseId, "searchId": str(search_id),
+            "inputAssessment": assessment,
             "diseaseSearchId": request.diseaseSearchId, "selectedDiseaseId": disease_id,
             "symptoms": request.symptoms, "summary": result["summary"], "message": result["message"],
             "hasPendingExplanations": bool(jobs), "cancelRequested": False,
@@ -415,13 +432,19 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
     def run_explanations(search_id, account):
         try:
             # Model calls are serialized between application processes as well.
-            with model_process_lock, engine.begin() as model_slot:
-                model_slot.execute(text("SELECT pg_advisory_xact_lock(61231841)"))
-                while True:
+            while True:
+                # Release the model slot between candidates so another search can run.
+                with model_process_lock, engine.begin() as model_slot:
+                    model_slot.execute(text("SELECT pg_advisory_xact_lock(61231841)"))
                     with engine.begin() as connection:
                         search = get_search(connection, search_id, account, lock=True)
                         context = search["INPUT_CONTEXT"]
                         jobs = context.get("explanations", {})
+                        priority_child = context.get('prioritizedPrescriptionSearchId')
+                        if priority_child:
+                            child = get_search(connection, priority_child, account)
+                            if pending(child['INPUT_CONTEXT'].get('explanations', {})):
+                                return
                         for interrupted in jobs.values():
                             if interrupted["result"]["status"] == "RUNNING":
                                 interrupted.update(
@@ -523,12 +546,13 @@ def create_ai_router(require_clinical_user, get_editable_consultation, validate_
                 raise HTTPException(context["failureHttpStatus"], search["FAILURE_REASON"])
             base = {"kind": context["kind"], "caseId": search["CASE_UNIQN"], "searchId": search_id,
                     "symptoms": search["INPUT_TEXT"], "hasPendingExplanations": pending(jobs),
+                    "inputAssessment": context.get('inputAssessment'),
                     "cancelRequested": bool(context.get("cancelRequested"))}
             if context["kind"] == "DISEASE":
                 candidates = load_candidates(connection, search)
                 return {**base, "total": len(candidates),
                         "candidates": [presentation(row, search_id, jobs) for row in candidates],
-                        "message": None if candidates else "현재 검색 범위에서 관련 병증을 찾지 못했습니다"}
+                        "message": context.get('inputAssessment', {}).get('message') if candidates else context.get('inputAssessment', {}).get('message', '현재 검색 범위에서 관련 병증을 찾지 못했습니다')}
             snapshot = search["SEARCH_CONFIG"]
             return {**base, "selectedDiseaseId": context["selectedDiseaseId"],
                     "diseaseSearchId": str(context["diseaseSearchId"]), "summary": snapshot["summary"],
