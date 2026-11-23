@@ -592,7 +592,7 @@ const sendPrescription = async (record) => {
                   <p>환자명: {detailPrescription.patientName}</p>
                   <p>처방명: {detailPrescription.prescriptionName}</p>
                   <p>
-                    작성 날짜: {detailPrescription.createdAt?.slice(0, 10)}
+                    작성 날짜: {(detailPrescription.savedAt ?? detailPrescription.createdAt)?.slice(0, 10)}
                   </p>
                   <p>상태: {detailPrescription.status}</p>
 
