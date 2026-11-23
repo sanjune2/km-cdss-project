@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from auth import hash_password
 from database import engine
+from invitation_email import invitation_link, send_staff_invitation
 
 
 class InviteRequest(BaseModel):
@@ -192,10 +193,14 @@ def create_staff_router(auth_dependency: Callable):
                 }
             ).scalar_one()
 
+        link = invitation_link(token)
+        delivery = send_staff_invitation(email, link)
         return {
             "message": "초대 링크가 생성되었습니다.",
             "invitationId": invite_id,
             "token": token,
+            "registrationUrl": link,
+            "emailDelivery": delivery,
             "expiresAt": expires_at.isoformat()
         }
 
