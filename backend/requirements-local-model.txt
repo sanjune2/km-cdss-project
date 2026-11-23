@@ -1,2 +1,7 @@
-# Optional resident llama.cpp HTTP transport. The CLI path still works without it.
+# Pinned offline tokenizer/chat template dependencies for both model transports.
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface-hub==0.36.2
+Jinja2==3.1.6
+# Resident llama.cpp HTTP transport.
 httpx==0.28.1
