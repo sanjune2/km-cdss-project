@@ -37,7 +37,8 @@ def verify_candidate(search, candidate, runtime, catalog):
         "등록 항목과 저장된 후보가 일치하지 않습니다.")
 
     keyword_applies = is_disease and candidate.get("_trace", {}).get("keywordRank") is not None
-    add("EXPRESSION_DISEASE", any(row["DIS_UNIQN"] == disease_id and search["INPUT_TEXT"] in row["term"]
+    terms = candidate.get('_trace', {}).get('affirmedTerms', [search['INPUT_TEXT']])
+    add("EXPRESSION_DISEASE", any(row["DIS_UNIQN"] == disease_id and row["term"].strip() in terms
                                  for row in runtime["keywords"]) if keyword_applies else False,
         "키워드 경로가 없거나 등록 표현과 병증 관계를 확인할 수 없습니다.",
         applies=keyword_applies, diseaseId=disease_id)

@@ -1,0 +1,2 @@
+# Optional resident llama.cpp HTTP transport. The CLI path still works without it.
+httpx==0.28.1

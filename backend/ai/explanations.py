@@ -5,6 +5,10 @@ import os
 import re
 import subprocess
 import tempfile
+from collections import OrderedDict
+from copy import deepcopy
+from hashlib import sha256
+from threading import Lock
 from pathlib import Path
 from functools import lru_cache
 from time import monotonic
@@ -20,6 +24,8 @@ TOKENIZER_REVISION = "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"
 MAX_INPUT_TOKENS = 3072
 MAX_OUTPUT_TOKENS = 1024
 GENERATION_TIMEOUT_SECONDS = 180
+_completion_cache = OrderedDict()
+_cache_lock = Lock()
 GENERATION = (
     "제공된 자료만 사용해 증상과 후보가 관련된 이유를 한국어 한 문장으로 작성하세요. "
     "symptoms는 검색에서 식별된 표현입니다. 환자에게 증상이 실제로 있거나 없다고 단정하지 마세요. "
@@ -140,12 +146,20 @@ def parse_completion(response):
     return document
 
 
-def chat(system, payload, *, cancelled=lambda: False):
+def complete_json(system, payload, schema, *, cancelled=lambda: False, output_limit=MAX_OUTPUT_TOKENS):
     if cancelled():
         raise ModelCancelled("설명 모델 호출을 중단했습니다.")
     prompt, input_tokens = prepare_prompt(system + " JSON 객체만 반환하세요.", payload)
-    executable, model = explanation_model_paths()
     started = monotonic()
+    server = os.getenv("KM_CDSS_LLAMA_SERVER_URL", "").strip()
+    if server:
+        from .local_completion import server_completion
+
+        document, timings = server_completion(server, prompt, schema, cancelled,
+                                              limit=output_limit, timeout=GENERATION_TIMEOUT_SECONDS)
+        return document, {"elapsedMs": round((monotonic() - started) * 1000),
+                          "inputTokens": input_tokens, "runtime": "llama-server", "timings": timings}
+    executable, model = explanation_model_paths()
     with tempfile.TemporaryDirectory(prefix="km-cdss-explanation-") as directory:
         prompt_path = Path(directory) / "prompt.txt"
         prompt_path.write_text(prompt, encoding="utf-8")
@@ -153,8 +167,8 @@ def chat(system, payload, *, cancelled=lambda: False):
             executable, "--model", model, "--file", str(prompt_path),
             "--no-conversation", "--no-display-prompt", "--no-warmup", "--no-escape",
             "--ctx-size", str(MAX_INPUT_TOKENS + MAX_OUTPUT_TOKENS),
-            "--n-predict", str(MAX_OUTPUT_TOKENS), "--temp", "0",
-            "--json-schema", json.dumps(explanation_schema(system, payload), ensure_ascii=True),
+            "--n-predict", str(output_limit), "--temp", "0",
+            "--json-schema", json.dumps(schema, ensure_ascii=True),
         ]
         with subprocess.Popen(
             command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -178,12 +192,42 @@ def chat(system, payload, *, cancelled=lambda: False):
         if process.returncode:
             raise RuntimeError(f"로컬 설명 모델 실행에 실패했습니다. ({process.returncode})")
     document = parse_completion(response.decode("utf-8-sig"))
-    rows = document.get("sentences" if system == GENERATION else "reviews")
-    if not isinstance(rows, list) or len(rows) != 1:
-        raise ValueError("설명 응답은 문장 한 개를 포함해야 합니다.")
     return document, {
         "elapsedMs": round((monotonic() - started) * 1000), "inputTokens": input_tokens,
     }
+
+
+def chat(system, payload, *, cancelled=lambda: False):
+    if cancelled():
+        raise ModelCancelled("설명 모델 호출을 중단했습니다.")
+    # Only registered symptom expressions and corporate sources enter this cache.
+    # Patient text is handled by complete_json and is never cached here.
+    paths = [Path(value) for key in ('KM_CDSS_LLAMA_EXECUTABLE', 'KM_CDSS_EXPLANATION_MODEL')
+             if (value := os.getenv(key))]
+    deployment = [(str(path), path.stat().st_size, path.stat().st_mtime_ns) for path in paths]
+    key = sha256(json.dumps([PROMPT_VERSION, MODEL_REVISION, os.getenv('KM_CDSS_LLAMA_SERVER_URL'),
+                            deployment, system, payload], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    with _cache_lock:
+        if key in _completion_cache:
+            document = deepcopy(_completion_cache[key])
+            _completion_cache.move_to_end(key)
+            return document, {'elapsedMs':0, 'cacheHit':True}
+    document, metrics = complete_json(system, payload, explanation_schema(system, payload), cancelled=cancelled)
+    rows = document.get("sentences" if system == GENERATION else "reviews")
+    if not isinstance(rows, list) or len(rows) != 1:
+        raise ValueError("설명 응답은 문장 한 개를 포함해야 합니다.")
+    if system == GENERATION:
+        check_generation(document, payload['candidateId'], payload['sources'])
+    else:
+        _, _, references = check_generation(payload['generated'], payload['candidateId'], payload['sources'])
+        check_review(document, payload['candidateId'], references)
+    if not cancelled():
+        with _cache_lock:
+            _completion_cache[key] = deepcopy(document)
+            _completion_cache.move_to_end(key)
+            while len(_completion_cache) > 128:
+                _completion_cache.popitem(last=False)
+    return document, metrics
 
 
 def nonempty(value):

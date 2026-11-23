@@ -97,14 +97,21 @@ def load_runtime(root):
     }
 
 
-def diseases_for(symptoms, data):
+def diseases_for(symptoms, data, assessment=None):
+    from .symptom_context import analyze_symptoms
+
+    assessment = assessment if assessment is not None else analyze_symptoms(symptoms, data)
+    terms = assessment['affirmedTerms']
+    search_terms = assessment.get('searchTerms', terms)
+    if not search_terms:
+        return []
     by_id = {row["DIS_UNIQN"]: row for row in data["diseases"]}
     keyword_ids = sorted(
-        {row["DIS_UNIQN"] for row in data["keywords"] if symptoms in row["term"]},
+        {row["DIS_UNIQN"] for row in data["keywords"] if row["term"].strip() in terms},
         key=lambda item_id: (by_id[item_id]["ATT_DIS_NM"], item_id),
     )[:30]
     semantic = search_semantic(
-        data["embedder"].encode_query(symptoms), data["diseases"], data["chunks"], data["matrix"],
+        data["embedder"].encode_query(' '.join(search_terms)), data["diseases"], data["chunks"], data["matrix"],
     )
     semantic_by_id = {row["id"]: row for row in semantic}
     chunks = {row["chunk_id"]: row for row in data["chunks"]}
@@ -120,6 +127,7 @@ def diseases_for(symptoms, data):
             "name": row["name"],
             "keywordRank": keyword_ids.index(item_id) + 1 if item_id in keyword_ids else None,
             "semantic": match,
+            "affirmedTerms": terms,
         }
     return rows
 
@@ -132,8 +140,14 @@ def load_catalog(root):
     )
 
 
-def prescriptions_for(symptoms, disease_id, data):
+def prescriptions_for(symptoms, disease_id, data, assessment=None):
     from .prescription_search import search_prescriptions
+    from .symptom_context import analyze_symptoms
+
+    assessment = assessment if assessment is not None else analyze_symptoms(symptoms, data)
+    search_terms = assessment.get('searchTerms', assessment['affirmedTerms'])
+    if not search_terms:
+        raise ValueError('처방 검색에 사용할 현재 환자의 긍정 증상이 없습니다.')
 
     catalog = Path(os.getenv(
         "KM_CDSS_CATALOG_ROOT", str(Path(__file__).resolve().parents[2] / "data/prescription_catalog"),
@@ -143,7 +157,7 @@ def prescriptions_for(symptoms, disease_id, data):
     if policy not in ("", "cosine-v1.3"):
         raise ValueError("지원하지 않는 처방 평가 정책입니다.")
     result = search_prescriptions(
-        symptoms, disease_id, data["embedder"], data["diseases"], data["prescriptions"],
+        ' '.join(search_terms), disease_id, data["embedder"], data["diseases"], data["prescriptions"],
         data["relations"], data["chunks"], data["matrix"], compositions, herbs,
         evaluation_configured=bool(policy),
     )

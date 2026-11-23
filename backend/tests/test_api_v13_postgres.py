@@ -258,7 +258,7 @@ class ApiV13Postgres(unittest.TestCase):
                 response = self.call("POST", disease, status, body={"caseId": 1, "symptoms": "test"})
                 self.assertNotIn(str(exception), response["error"]["message"])
         with (
-            patch.object(self.runtime, "get_runtime", return_value={"version": "fixture"}),
+            patch.object(self.runtime, "get_runtime", return_value={"version": "fixture", "keywords":[{"term":"test"}]}),
             patch.object(self.runtime, "diseases_for", return_value=[]),
         ):
             zero = self.call("POST", disease, 200, body={"caseId": 1, "symptoms": " test "})
@@ -402,7 +402,8 @@ class ApiV13Postgres(unittest.TestCase):
 
         embedder = Mock()
         fixture = {
-            "version": "fixture", "diseases": [{"DIS_UNIQN": 5062}], "keywords": [],
+            "version": "fixture", "diseases": [{"DIS_UNIQN": 5062}],
+            "keywords": [{"DIS_UNIQN": 5062, "term": "test"}],
             "prescriptions": [
                 {"PRESP_UNIQN": 51, "PRESP_NM": "가", "PRESP_CONT": "등록 설명", "TABO_CONT": ""},
                 {"PRESP_UNIQN": 52, "PRESP_NM": "나", "PRESP_CONT": "", "TABO_CONT": ""},
@@ -425,4 +426,36 @@ class ApiV13Postgres(unittest.TestCase):
         rows = self.sql("""SELECT "SCORE_STATUS", "RESULT_RANK", "RELEVANCE_SCORE"
                            FROM "PRESP_SEARCH_RESULT" ORDER BY "PRESP_UNIQN" """).all()
         self.assertEqual(rows, [("POLICY_NOT_CONFIGURED", None, None), ("INSUFFICIENT_DATA", None, None)])
+
+    def test_legacy_waiting_cannot_revert_saved_consultation(self):
+        self.call('PATCH', '/api/consultations/1', 200, body=self.draft())
+        before = self.sql('SELECT "STATUS_CD", "DOCTOR_UNIQN", "STARTED_AT" FROM "VISIT" WHERE "VISIT_UNIQN"=1').one()
+        self.call('PATCH', '/api/waiting/1', 409, body={'status':'대기'})
+        self.call('PATCH', '/api/visits/1/status', 409, body=self.visit('CORRECT_START', 'reason'))
+        after = self.sql('SELECT "STATUS_CD", "DOCTOR_UNIQN", "STARTED_AT" FROM "VISIT" WHERE "VISIT_UNIQN"=1').one()
+        self.assertEqual(before, after)
+
+    def test_legacy_start_creates_consultation_via_current_workflow(self):
+        result = self.call('PATCH', '/api/waiting/3', 200, body={'status':'진료 중', 'doctor':'spoofed'})
+        case_id = result['patient']['caseId']
+        self.assertIsNotNone(case_id)
+        self.assertEqual(self.sql('SELECT "AUTHOR_UNIQN" FROM "CASE_RECORD" WHERE "CASE_UNIQN"=:id',id=case_id).scalar_one(),1)
+        self.assertNotEqual(result['patient']['doctor'],'spoofed')
+
+    def test_visit_response_preserves_patient_contact(self):
+        self.sql('UPDATE "PATIENT" SET "PHONE"=:phone, "ADDRESS"=:address WHERE "PATIENT_UNIQN"=1',phone='010-0000-0000',address='synthetic')
+        response = self.call('GET','/api/visits',200)
+        record = next(row for row in response['records'] if row['id']==1)
+        self.assertEqual((record['phone'],record['address']),('010-0000-0000','synthetic'))
+
+    def test_password_change_revokes_other_sessions_but_keeps_current(self):
+        self.sql('''INSERT INTO "LOGIN_SESSION" ("ACCOUNT_UNIQN","TOKEN_HASH","CREATED_AT","EXPIRES_AT")
+                    VALUES (1,:token,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP + interval '1 hour')''',
+                 token=self.main.hash_session_token('other-browser'))
+        self.call('PATCH','/api/profile/password',200,body={'currentPassword':PASSWORD,
+                  'newPassword':'Changed-test-only-93!', 'confirmPassword':'Changed-test-only-93!'})
+        self.call('GET','/api/auth/me',200)
+        self.call('GET','/api/auth/me',401,user='other-browser')
+        self.call('POST','/api/auth/login',401,user=None,body={'email':'author@example.invalid','password':PASSWORD})
+        self.call('POST','/api/auth/login',200,user=None,body={'email':'author@example.invalid','password':'Changed-test-only-93!'})
 

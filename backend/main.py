@@ -658,7 +658,7 @@ def get_visits(
                     v."WAITING_AT",
                     v."STARTED_AT",
                     v."COMPLETED_AT",
-                    p."NAME", p."BIRTH_DATE", a."NAME" AS doctor_name,
+                    p."NAME", p."BIRTH_DATE", p."PHONE", p."ADDRESS", a."NAME" AS doctor_name,
                     c."CASE_UNIQN" AS case_id
                 FROM "VISIT" v
                 JOIN "PATIENT" p
@@ -697,6 +697,8 @@ def get_visits(
             "patientId": row["PATIENT_UNIQN"],
             "patientName": row["NAME"],
             "birthDate": row["BIRTH_DATE"].isoformat() if row["BIRTH_DATE"] else "",
+            "phone": row["PHONE"] or "",
+            "address": row["ADDRESS"] or "",
             "doctorName": row["doctor_name"],
             "caseId": row["case_id"],
             "doctorId": row["DOCTOR_UNIQN"],
@@ -1343,39 +1345,26 @@ def update_waiting_status(patient_id: int, request: WaitingStatusUpdate,
                           account=Depends(require_clinical_user)):
     if request.status not in ("진료 중", "대기"):
         raise HTTPException(status_code=400, detail="올바르지 않은 상태입니다.")
-    starting = request.status == "진료 중"
-    before = "WAITING" if starting else "IN_PROGRESS"
-    after = "IN_PROGRESS" if starting else "WAITING"
-    with engine.begin() as connection:
+    # Older clients must not bypass saved consultation/search/prescription guards.
+    # Reverting a start requires the explicit, reasoned CORRECT_START workflow.
+    if request.status == "대기":
+        raise HTTPException(409, "상담 중단 또는 시작 정정은 방문 상태 변경 기능에서 사유와 함께 처리해주세요.")
+    with engine.connect() as connection:
         visit = connection.execute(text('''
-            SELECT v."VISIT_UNIQN", v."DOCTOR_UNIQN" FROM "VISIT" v
+            SELECT v."VISIT_UNIQN" FROM "VISIT" v
             JOIN "PATIENT" p ON p."PATIENT_UNIQN" = v."PATIENT_UNIQN"
             WHERE v."PATIENT_UNIQN" = :patient_id
-              AND p."CLINIC_UNIQN" = :clinic_id AND v."STATUS_CD" = :before
-            ORDER BY v."VISIT_UNIQN" DESC LIMIT 1 FOR UPDATE OF v
+              AND p."CLINIC_UNIQN" = :clinic_id AND v."STATUS_CD" = 'WAITING'
+            ORDER BY v."VISIT_UNIQN" DESC LIMIT 1
         '''), {"patient_id": patient_id, "clinic_id": account["CLINIC_UNIQN"],
-                "before": before}).mappings().first()
+                }).mappings().first()
         if visit is None:
             raise HTTPException(status_code=409, detail="현재 상태에서는 변경할 수 없습니다.")
-        if not starting and visit["DOCTOR_UNIQN"] != account["ACCOUNT_UNIQN"]:
-            raise HTTPException(status_code=403, detail="담당 한의사만 상담을 취소할 수 있습니다.")
-        connection.execute(text('''
-            UPDATE "VISIT" SET "STATUS_CD" = :after,
-                "DOCTOR_UNIQN" = :doctor_id,
-                "STARTED_AT" = CASE WHEN :starting THEN CURRENT_TIMESTAMP ELSE NULL END,
-                "WAITING_AT" = CASE WHEN :starting THEN "WAITING_AT" ELSE CURRENT_TIMESTAMP END
-            WHERE "VISIT_UNIQN" = :visit_id
-        '''), {"after": after, "doctor_id": account["ACCOUNT_UNIQN"] if starting else None,
-                "starting": starting, "visit_id": visit["VISIT_UNIQN"]})
-        connection.execute(text('''
-            INSERT INTO "VISIT_STATUS_HISTORY"
-                ("VISIT_UNIQN", "BEFORE_STATUS", "AFTER_STATUS", "CHANGED_BY", "REASON")
-            VALUES (:visit_id, :before, :after, :changed_by, NULL)
-        '''), {"visit_id": visit["VISIT_UNIQN"], "before": before,
-                "after": after, "changed_by": account["ACCOUNT_UNIQN"]})
+    result = update_visit_status(visit["VISIT_UNIQN"],
+                                VisitStatusUpdate(action="START", reason=None, consultation=None), account)
     return {"message": "환자 상태가 변경되었습니다.", "patient": {
         "id": patient_id, "visitId": visit["VISIT_UNIQN"], "status": request.status,
-        "doctor": request.doctor if starting else None}}
+        "doctor": result["record"]["doctorName"], "caseId": result["record"]["caseId"]}}
 
 
 @app.delete("/api/waiting/{patient_id}")
@@ -3360,6 +3349,7 @@ class PasswordChangeRequest(BaseModel):
 @app.patch("/api/profile/password")
 def change_my_password(
     request: PasswordChangeRequest,
+    http_request: Request,
     account=Depends(require_authenticated_user)
 ):
     # 1. 새 비밀번호 유효성 검사
@@ -3437,9 +3427,14 @@ def change_my_password(
             }
         )
 
-    return {
-        "message": "비밀번호가 변경되었습니다."
-    }
+        connection.execute(text('''
+            UPDATE "LOGIN_SESSION" SET "REVOKED_AT" = CURRENT_TIMESTAMP
+            WHERE "ACCOUNT_UNIQN" = :account_id AND "REVOKED_AT" IS NULL
+              AND "TOKEN_HASH" <> :current_token
+        '''), {"account_id": account["ACCOUNT_UNIQN"],
+               "current_token": hash_session_token(http_request.cookies.get("session", ""))})
+
+    return {"message": "비밀번호가 변경되었습니다. 다른 기기의 로그인은 종료되었습니다."}
 
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response):
