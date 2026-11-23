@@ -20,7 +20,7 @@ export default function Staff() {
   const [filter, setFilter] = useState('ALL')
   const [email, setEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('DOCTOR')
-  const [inviteToken, setInviteToken] = useState('')
+  const [inviteResult, setInviteResult] = useState(null)
   const [loading, setLoading] = useState(true)
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
@@ -38,11 +38,8 @@ export default function Staff() {
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
-      throw new Error(
-        typeof data.detail === 'string'
-          ? data.detail
-          : '요청 처리에 실패했습니다.'
-      )
+      const message = data.error?.message ?? data.detail
+      throw new Error(typeof message === 'string' ? message : '요청 처리에 실패했습니다.')
     }
 
     return data
@@ -76,6 +73,7 @@ export default function Staff() {
     }
 
     setWorking(true)
+    setInviteResult(null)
 
     try {
       const data = await request('/api/staff/invitations', {
@@ -86,10 +84,9 @@ export default function Staff() {
         }),
       })
 
-      setInviteToken(data.token)
+      setInviteResult(data)
       setEmail('')
       await loadStaff()
-      alert('초대 링크가 생성되었습니다.')
     } catch (err) {
       alert(err.message)
     } finally {
@@ -157,8 +154,8 @@ export default function Staff() {
       ? invitations
       : []
 
-  const invitationLink = inviteToken
-    ? `${window.location.origin}/staff/register?token=${encodeURIComponent(inviteToken)}`
+  const invitationLink = inviteResult?.token
+    ? inviteResult.registrationUrl || `${window.location.origin}/staff/register?token=${encodeURIComponent(inviteResult.token)}`
     : ''
 
   const copyInvitationLink = async () => {
@@ -240,7 +237,11 @@ export default function Staff() {
               링크 복사
             </button>
             <p style={{ fontSize: '13px', color: '#666' }}>
-              실제 이메일 발송은 아직 연결되지 않았습니다.
+              {inviteResult.emailDelivery === 'sent'
+                ? '직원 이메일로 초대 링크를 보냈습니다.'
+                : inviteResult.emailDelivery === 'failed'
+                  ? '메일을 보내지 못했습니다. 아래 링크를 복사해 전달해 주세요.'
+                  : '메일 발송 설정이 필요합니다. 아래 링크를 복사해 전달할 수 있습니다.'}
             </p>
           </div>
         )}
@@ -413,7 +414,7 @@ export default function Staff() {
                         : '접수·수납'}
                     </td>
                     <td style={cellStyle}>
-                      {statusLabels[invitation.status] || '초대대기'}
+                      {invitation.status === 'PENDING' ? '초대대기' : statusLabels[invitation.status] || invitation.status}
                     </td>
                     <td style={cellStyle}>-</td>
                   </tr>
